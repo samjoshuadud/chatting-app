@@ -5,13 +5,16 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "NODE_ENV=production node server/index.js",
     "lint": "next lint"
   },
   "dependencies": {
+    "firebase": "^10.14.0",
+    "modal": "^1.2.0",
+    "next": "14.2.14",
     "react": "^18",
     "react-dom": "^18",
-    "next": "14.2.14"
+    "react-modal": "^3.16.1"
   },
   "devDependencies": {
     "postcss": "^8",
