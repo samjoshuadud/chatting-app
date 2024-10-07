@@ -3,12 +3,22 @@
 import { usePathname, useRouter } from 'next/navigation';
 import { signOut } from 'firebase/auth';
 import { auth } from '../firebase/config'; // Make sure this path is correct
+import { useEffect, useState } from 'react';
 
 export default function LogoutButton() {
   const pathname = usePathname();
   const router = useRouter();
+  const [user, setUser] = useState(null);
 
-  if (pathname === '/login') return null;
+  useEffect(() => {
+    const unsubscribe = auth.onAuthStateChanged((user) => {
+      setUser(user);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  if (!user) return null;
 
   const handleLogout = async () => {
     try {
