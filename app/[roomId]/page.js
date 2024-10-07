@@ -49,14 +49,14 @@ export default function Room() {
   useEffect(() => {
     if (roomId && user) {
       const messagesRef = collection(db, 'rooms', roomId, 'messages');
-      const q = query(messagesRef, orderBy('createdAt', 'asc'));
+      const q = query(messagesRef, orderBy('createdAt', 'desc'));  // Change to 'desc'
 
       const messagesUnsubscribe = onSnapshot(q, (snapshot) => {
         const newMessages = snapshot.docs.map(doc => ({
           id: doc.id,
           ...doc.data()
         }));
-        setMessages(newMessages);
+        setMessages(newMessages.reverse());  // Reverse the array
       });
 
       return () => messagesUnsubscribe();
@@ -134,6 +134,7 @@ export default function Room() {
       const roomRef = doc(db, "rooms", roomId);
       await deleteDoc(roomRef);
       console.log("Room successfully deleted");
+      router.push('/join');
     } catch (error) {
       console.error("Error deleting room:", error);
       alert("Failed to delete the room. Please try again.");
@@ -192,7 +193,7 @@ export default function Room() {
               </div>
             </div>
 
-            <div id="messages-container" className="bg-[#3C3D37]/40 rounded-lg h-[35rem] mb-6 p-4 overflow-y-auto">
+            <div id="messages-container" className="bg-[#3C3D37]/40 rounded-lg h-[35rem] mb-6 p-4 overflow-y-auto flex flex-col-reverse">
               <div>
                 {messages.map((message) => (
                   <div key={message.id} className={`max-w-[70%] rounded-lg p-3 mb-3 ${message.uid === user.uid ? 'ml-auto bg-[#4A9C6D]' : 'bg-[#3C3D37]'} transform transition-all duration-300 ease-in-out hover:translate-y-[-2px]`}>
