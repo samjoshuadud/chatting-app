@@ -4,7 +4,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { auth, db } from '../firebase/config';
 import { onAuthStateChanged, updateProfile } from 'firebase/auth';
-import { doc, getDoc, collection, addDoc, onSnapshot, query, orderBy, deleteDoc, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, collection, addDoc, onSnapshot, query, orderBy, deleteDoc, serverTimestamp, setDoc } from "firebase/firestore";
+import { getDatabase, ref, onDisconnect, set, serverTimestamp as rtdbServerTimestamp } from 'firebase/database';
 import Modal from 'react-modal';
 import Loading from '../components/loading';
 import RoomNotFound from '../components/roomnotfound';
@@ -49,19 +50,55 @@ export default function Room() {
   useEffect(() => {
     if (roomId && user) {
       const messagesRef = collection(db, 'rooms', roomId, 'messages');
-      const q = query(messagesRef, orderBy('createdAt', 'desc'));  // Change to 'desc'
+      const q = query(messagesRef, orderBy('createdAt', 'desc'));
 
       const messagesUnsubscribe = onSnapshot(q, (snapshot) => {
         const newMessages = snapshot.docs.map(doc => ({
           id: doc.id,
           ...doc.data()
         }));
-        setMessages(newMessages.reverse());  // Reverse the array
+        setMessages(newMessages.reverse());
       });
 
-      return () => messagesUnsubscribe();
+      // Add join notification
+      addJoinNotification();
+
+      // Set up presence system
+      const rtdb = getDatabase();
+      const presenceRef = ref(rtdb, `rooms/${roomId}/presence/${user.uid}`);
+      const userStatusRef = ref(rtdb, `rooms/${roomId}/status/${user.uid}`);
+
+      set(presenceRef, true);
+      onDisconnect(presenceRef).remove();
+      onDisconnect(userStatusRef).set('offline');
+
+      // Listen for disconnects and add leave notification
+      onDisconnect(userStatusRef).set('offline').then(() => {
+        addLeaveNotification();
+      });
+
+      return () => {
+        messagesUnsubscribe();
+        set(presenceRef, null);
+        set(userStatusRef, 'offline');
+        addLeaveNotification();
+      };
     }
   }, [roomId, user]);
+
+  useEffect(() => {
+    if (roomId) {
+      const roomRef = doc(db, "rooms", roomId);
+      const unsubscribe = onSnapshot(roomRef, (doc) => {
+        if (!doc.exists()) {
+          setRoomDeleted(true);
+          setRoomStatus('deleted');
+        }
+      });
+
+      return () => unsubscribe();
+    }
+  }, [roomId]);
 
   useEffect(() => {
     scrollToBottom();
@@ -143,33 +180,63 @@ export default function Room() {
     }
   };
 
+  const addJoinNotification = async () => {
+    if (!roomId || !user) return;
+
+    const messagesRef = collection(db, 'rooms', roomId, 'messages');
+    await addDoc(messagesRef, {
+      type: 'notification',
+      text: `${displayName} joined the room`,
+      createdAt: serverTimestamp(),
+      uid: user.uid
+    });
+  };
+
+  const addLeaveNotification = async () => {
+    if (!roomId || !user) return;
+
+    const messagesRef = collection(db, 'rooms', roomId, 'messages');
+    await addDoc(messagesRef, {
+      type: 'notification',
+      text: `${displayName} left the room`,
+      createdAt: serverTimestamp(),
+      uid: user.uid
+    });
+  };
+
+  const handleLeaveRoom = () => {
+    addLeaveNotification().then(() => {
+      router.push('/join');
+    });
+  };
+
   if (loading) {
     return <Loading />;
   }
 
   switch (roomStatus) {
-    case 'deleted':
-      return <RoomDeleted />;
+    // case 'deleted':
+    //   return <RoomDeleted />;
     case 'not_found':
       return <RoomNotFound />;
     case 'exists':
       return (
-        <div className="flex items-center justify-center min-h-screen bg-[#0F110C] transition-all duration-500 ease-in-out">
-          <div className="w-[45rem] h-[50rem] bg-[#181C14] rounded-lg p-8 shadow-lg transform transition-all duration-500 ease-in-out hover:shadow-2xl hover:scale-[1.02]">
-            <div className="flex items-center justify-between mb-6">
-              <h1 className="text-white text-3xl font-bold animate-fade-in-down">Chat room #{roomId}</h1>
-              <div className="flex items-center space-x-4">
+        <div className="flex items-center justify-center min-h-screen bg-[#0F110C] transition-all duration-500 ease-in-out p-4">
+          <div className="w-full max-w-[45rem] bg-[#181C14] rounded-lg p-4 sm:p-8 shadow-lg transform transition-all duration-500 ease-in-out hover:shadow-2xl hover:scale-[1.02]">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 space-y-4 sm:space-y-0">
+              <h1 className="text-white text-2xl sm:text-3xl font-bold animate-fade-in-down">Chat room #{roomId}</h1>
+              <div className="flex flex-col sm:flex-row items-center justify-end gap-2 sm:gap-4">
                 {isEditingName ? (
-                  <div className="flex items-center space-x-2 animate-fade-in">
+                  <div className="flex items-center space-x-2 animate-fade-in w-full sm:w-auto">
                     <input
                       type="text"
                       value={displayName}
                       onChange={(e) => setDisplayName(e.target.value)}
-                      className="bg-[#3C3D37]/40 text-white px-3 py-2 rounded-lg focus:ring-2 focus:ring-[#4A9C6D] transition-all duration-300 ease-in-out"
+                      className="bg-[#3C3D37]/40 text-white px-3 py-2 rounded-lg focus:ring-2 focus:ring-[#4A9C6D] transition-all duration-300 ease-in-out flex-grow"
                     />
                     <button 
                       onClick={handleNameChange}
-                      className="bg-[#4A9C6D] text-white px-4 py-2 rounded-lg transition-all duration-300 ease-in-out hover:bg-[#5ABD82] hover:shadow-lg transform hover:translate-y-[-2px] active:translate-y-[1px]"
+                      className="bg-[#4A9C6D] text-white px-4 py-2 rounded-lg transition-all duration-300 ease-in-out hover:bg-[#5ABD82] hover:shadow-lg transform hover:translate-y-[-2px] active:translate-y-[1px] whitespace-nowrap"
                     >
                       Save
                     </button>
@@ -177,7 +244,7 @@ export default function Room() {
                 ) : (
                   <button 
                     onClick={() => setIsEditingName(true)}
-                    className="bg-[#3C3D37] text-white px-4 py-2 rounded-lg transition-all duration-300 ease-in-out hover:bg-[#4A4B44] hover:shadow-lg transform hover:translate-y-[-2px] active:translate-y-[1px]"
+                    className="bg-[#3C3D37] text-white px-4 py-2 rounded-lg transition-all duration-300 ease-in-out hover:bg-[#4A4B44] hover:shadow-lg transform hover:translate-y-[-2px] active:translate-y-[1px] whitespace-nowrap w-full sm:w-auto"
                   >
                     Change Name
                   </button>
@@ -185,25 +252,43 @@ export default function Room() {
                 {isCreator && (
                   <button 
                     onClick={handleDeleteRoom}
-                    className="bg-red-500 text-white px-4 py-2 rounded-lg transition-all duration-300 ease-in-out hover:bg-red-600 hover:shadow-lg transform hover:translate-y-[-2px] active:translate-y-[1px]"
+                    className="bg-red-500 text-white px-4 py-2 rounded-lg transition-all duration-300 ease-in-out hover:bg-red-600 hover:shadow-lg transform hover:translate-y-[-2px] active:translate-y-[1px] whitespace-nowrap w-full sm:w-auto"
                   >
                     Delete Room
                   </button>
                 )}
+                <button 
+                  onClick={handleLeaveRoom}
+                  className="bg-[#4A9C6D] text-white px-4 py-2 rounded-lg transition-all duration-300 ease-in-out hover:bg-[#5ABD82] hover:shadow-lg transform hover:translate-y-[-2px] active:translate-y-[1px] whitespace-nowrap w-full sm:w-auto"
+                >
+                  Leave Room
+                </button>
               </div>
             </div>
 
             <div id="messages-container" className="bg-[#3C3D37]/40 rounded-lg h-[35rem] mb-6 p-4 overflow-y-auto flex flex-col-reverse">
               <div>
                 {messages.map((message) => (
-                  <div key={message.id} className={`max-w-[70%] rounded-lg p-3 mb-3 ${message.uid === user.uid ? 'ml-auto bg-[#4A9C6D]' : 'bg-[#3C3D37]'} transform transition-all duration-300 ease-in-out hover:translate-y-[-2px]`}>
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="text-xs text-gray-300">{message.username}</span>
-                      <span className="text-xs text-gray-400">
-                        {message.createdAt ? new Date(message.createdAt.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
-                      </span>
-                    </div>
-                    <div className="text-white">{message.text}</div>
+                  <div key={message.id} className={`max-w-[70%] rounded-lg p-3 mb-3 ${
+                    message.type === 'notification' 
+                      ? 'mx-auto bg-[#2C2D2A] text-center' 
+                      : message.uid === user.uid 
+                        ? 'ml-auto bg-[#4A9C6D]' 
+                        : 'bg-[#3C3D37]'
+                  } transform transition-all duration-300 ease-in-out hover:translate-y-[-2px]`}>
+                    {message.type === 'notification' ? (
+                      <div className="text-gray-400 text-sm italic">{message.text}</div>
+                    ) : (
+                      <>
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="text-xs text-gray-300">{message.username}</span>
+                          <span className="text-xs text-gray-400">
+                            {message.createdAt ? new Date(message.createdAt.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                          </span>
+                        </div>
+                        <div className="text-white">{message.text}</div>
+                      </>
+                    )}
                   </div>
                 ))}
               </div>
