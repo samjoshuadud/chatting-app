@@ -1,20 +1,19 @@
 'use client'
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { auth, db } from '../firebase/config';
 import { onAuthStateChanged, updateProfile } from 'firebase/auth';
-import { doc, getDoc, collection, addDoc, onSnapshot, query, orderBy, deleteDoc } from "firebase/firestore";
+import { doc, getDoc, collection, addDoc, onSnapshot, query, orderBy, deleteDoc, serverTimestamp } from "firebase/firestore";
 import Modal from 'react-modal';
 import Loading from '../components/loading';
 import RoomNotFound from '../components/roomnotfound';
 import RoomDeleted from '../components/RoomDeleted';
 
-// Bind modal to your appElement (http://reactcommunity.org/react-modal/accessibility/)
 export default function Room() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [roomStatus, setRoomStatus] = useState('loading'); // 'loading', 'exists', 'not_found', 'deleted'
+  const [roomStatus, setRoomStatus] = useState('loading');
   const [isCreator, setIsCreator] = useState(false);
   const [roomDeleted, setRoomDeleted] = useState(false);
   const [messages, setMessages] = useState([]);
@@ -22,13 +21,13 @@ export default function Room() {
   const [displayName, setDisplayName] = useState('');
   const [isEditingName, setIsEditingName] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const messagesEndRef = useRef(null);
 
   const router = useRouter();
   const params = useParams();
   const roomId = params?.roomId;
 
   useEffect(() => {
-    // Set the app element for react-modal
     Modal.setAppElement(document.body);
   }, []);
 
@@ -49,17 +48,8 @@ export default function Room() {
 
   useEffect(() => {
     if (roomId && user) {
-      const roomRef = doc(db, "rooms", roomId);
-      const unsubscribe = onSnapshot(roomRef, (doc) => {
-        if (doc.exists()) {
-          // Room exists, update any necessary state
-        } else {
-          setRoomStatus('not_found');
-        }
-      });
-
       const messagesRef = collection(db, 'rooms', roomId, 'messages');
-      const q = query(messagesRef, orderBy('createdAt', 'desc'));
+      const q = query(messagesRef, orderBy('createdAt', 'asc'));
 
       const messagesUnsubscribe = onSnapshot(q, (snapshot) => {
         const newMessages = snapshot.docs.map(doc => ({
@@ -69,20 +59,20 @@ export default function Room() {
         setMessages(newMessages);
       });
 
-      return () => {
-        unsubscribe();
-        messagesUnsubscribe();
-      };
+      return () => messagesUnsubscribe();
     }
   }, [roomId, user]);
 
-  // Add this useEffect to scroll to bottom when messages change
   useEffect(() => {
-    const messagesContainer = document.getElementById('messages-container');
-    if (messagesContainer) {
-      messagesContainer.scrollTop = messagesContainer.scrollHeight;
-    }
+    scrollToBottom();
   }, [messages]);
+
+  const scrollToBottom = () => {
+    const container = document.getElementById('messages-container');
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
+  };
 
   const checkRoomExists = async (user) => {
     if (!roomId) return;
@@ -109,7 +99,7 @@ export default function Room() {
     const messagesRef = collection(db, 'rooms', roomId, 'messages');
     await addDoc(messagesRef, {
       text: newMessage,
-      createdAt: Date.now(),
+      createdAt: serverTimestamp(),
       uid: user.uid,
       username: displayName
     });
@@ -202,15 +192,21 @@ export default function Room() {
               </div>
             </div>
 
-            <div id="messages-container" className="bg-[#3C3D37]/40 rounded-lg h-[35rem] mb-6 p-4 overflow-y-auto flex flex-col-reverse">
+            <div id="messages-container" className="bg-[#3C3D37]/40 rounded-lg h-[35rem] mb-6 p-4 overflow-y-auto">
               <div>
                 {messages.map((message) => (
                   <div key={message.id} className={`max-w-[70%] rounded-lg p-3 mb-3 ${message.uid === user.uid ? 'ml-auto bg-[#4A9C6D]' : 'bg-[#3C3D37]'} transform transition-all duration-300 ease-in-out hover:translate-y-[-2px]`}>
-                    <div className="text-xs text-gray-300 mb-1">{message.username}</div>
+                    <div className="flex justify-between items-center mb-1">
+                      <span className="text-xs text-gray-300">{message.username}</span>
+                      <span className="text-xs text-gray-400">
+                        {message.createdAt ? new Date(message.createdAt.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                      </span>
+                    </div>
                     <div className="text-white">{message.text}</div>
                   </div>
                 ))}
               </div>
+              <div ref={messagesEndRef} />
             </div>
 
             <form onSubmit={handleSubmit} className="flex space-x-4">
